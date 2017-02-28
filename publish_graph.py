@@ -1,25 +1,41 @@
 import boto3
 import click
 import paramiko
+import select
+import time
 
 
 def push_to_instance(instance_id, ssh_user, ssh_private_key, graph_source_path, graph_destination_path):
-    # TODO: push Graph.obj file into a given instance
     private_key = paramiko.RSAKey.from_private_key_file(ssh_private_key)
     client = paramiko.SSHClient()
     client.set_missing_host_key_policy(paramiko.AutoAddPolicy())
     print "Connecting to the EC2 instance with IP Addresses %s" % instance_id
     client.connect(hostname=instance_id, username=ssh_user, pkey=private_key)
-    print "Uploading %s to %s" % (graph_source_path, instance_id)
-    with client.open_sftp() as sftp:
-        sftp.put(graph_source_path, '/tmp/Graph.obj')
-        sftp.chown('/tmp/Graph.obj', 'otp', 'otp')
+    try:
+        print "Uploading %s to %s" % (graph_source_path, instance_id)
+        with client.open_sftp() as sftp:
+            sftp.put(graph_source_path, '/tmp/Graph.obj')
 
-    # TODO: change owner:group of file uploaded to otp
-    # TODO: backup current Graph.obj file by copying it into /tmp
-    # TODO: copy uploaded file to destination path
-    # TODO: restart supervisor process
-    client.close()
+        batch_commands = [
+            'sudo chown otp:otp /tmp/Graph.obj',
+            'sudo supervisorctl stop otp',
+            'sudo mv %s /tmp/Graph.obj.tmp' % graph_destination_path,
+            'sudo mv /tmp/Graph.obj %s' % graph_destination_path,
+            'sudo supervisorctl start otp'
+        ]
+        for command in batch_commands:
+            print "Command: %s" % command
+            stdin, stdout, stderr = client.exec_command(command)
+            while not stdout.channel.exit_status_ready():
+                if stdout.channel.recv_ready():
+                    rl, wl, xl = select.select([stdout.channel], [], [], 0.0)
+                    if len(rl) > 0:
+                        # Print data from stdout
+                        print stdout.channel.recv(1024)
+    except Exception, ex:
+        print ex
+    finally:
+        client.close()
 
 
 @click.command()
@@ -49,21 +65,22 @@ def push_graph(elb_name, aws_access_key_id, aws_secret_access_key, aws_region_na
     for instance in instances:
         instance_info = ec2.Instance(instance['InstanceId'])
         # remove instance from ELB
-        """
+        print 'Removing instance %s from ELB %s' % (instance_info.public_ip_address, elb_name)
         elb_client.deregister_instances_from_load_balancer(
             Instances=[instance],
             LoadBalancerName=elb_name
         )
-        """
         push_to_instance(instance_info.public_ip_address, ssh_user, ssh_private_key,
                          graph_source_path, graph_destination_path)
+        # suspending the execution for 5 minutes, until Graph has been indexed and Grizzly server be running
+        print "Waiting until Graph has been indexed and Grizzly server be running again"
+        time.sleep(360)
         # add instance to ELB
-        """
+        print 'Adding instance %s to ELB %s' % (instance_info.public_ip_address, elb_name)
         elb_client.register_instances_with_load_balancer(
             LoadBalancerName=elb_name,
             Instances=[instance]
         )
-        """
 
 
 if __name__ == '__main__':
