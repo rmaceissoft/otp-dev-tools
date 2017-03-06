@@ -62,6 +62,10 @@ def push_graph(elb_name, aws_access_key_id, aws_secret_access_key, aws_region_na
 
     response = elb_client.describe_load_balancers(LoadBalancerNames=[elb_name])
     instances = response['LoadBalancerDescriptions'][0]['Instances']
+    count_instances = len(instances)
+    if count_instances <= 1:
+        print 'Process aborted. You have %d EC2 instance and this command requires to have 2 as minimum.'
+        return
     for instance in instances:
         instance_info = ec2.Instance(instance['InstanceId'])
         # remove instance from ELB
