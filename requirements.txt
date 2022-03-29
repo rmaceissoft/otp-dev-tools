@@ -1,4 +1,4 @@
 boto3==1.4.4
 click==6.7
-paramiko==2.1.6
+paramiko==2.10.1
 
